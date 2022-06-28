@@ -6,10 +6,14 @@ from fastcore.basics import *
 from fastcore.imports import *
 from fastcore.script import call_parse
 
+from base64 import b64encode
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.displayhook import DisplayHook
 from IPython.core.displaypub import DisplayPublisher
 from io import StringIO
+from matplotlib_inline.config import InlineBackend
+from matplotlib_inline.backend_inline import select_figure_formats
+import tokenize
 
 from .fastshell import FastInteractiveShell
 from .nbio import *
@@ -25,8 +29,18 @@ __all__ = ['CaptureShell', 'exec_nb']
 
 class _CaptureHook(DisplayHook):
     "Called when displaying a result"
+    def quiet(self):
+        """Should we silence the display hook because of ';'?"""
+        # Adapted from `DisplayHook.quiet` using `shell._code` over `shell.history_manager.input_hist_parsed[-1]`
+        sio = StringIO(self.shell._code)
+        tokens = list(tokenize.generate_tokens(sio.readline))
+        for token in reversed(tokens):
+            if token[0] in (tokenize.ENDMARKER, tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT): continue
+            if (token[0] == tokenize.OP) and (token[1] == ';'): return True
+            else: return False
+
     def __call__(self, result=None):
-        if result is None: return
+        if result is None or self.quiet(): return
         self.fill_exec_result(result)
         self.shell._result(result)
 
@@ -37,24 +51,19 @@ class _CapturePub(DisplayPublisher):
 # %% ../nbs/02_shell.ipynb 5
 # These are the standard notebook formats for exception and stream data (e.g stdout)
 def _out_exc(ename, evalue, traceback): return dict(ename=str(ename), evalue=str(evalue), output_type='error', traceback=traceback)
-def _out_stream(text): return dict(name='stdout', output_type='stream', text=text.splitlines(False))
+def _out_stream(text, name): return dict(name=name, output_type='stream', text=text.splitlines(True))
 
 # %% ../nbs/02_shell.ipynb 7
-_CODE_MATPLOTLIB_INLINE = """
-from IPython import get_ipython
-try: get_ipython().run_line_magic('matplotlib', 'inline')
-except ModuleNotFoundError: pass
-""".strip()
-
 class CaptureShell(FastInteractiveShell):
     "Execute the IPython/Jupyter source code"
     def __init__(self,
-                path:str|Path=None): # Add `path` to python path
+                 path:str|Path=None): # Add `path` to python path
         super().__init__(displayhook_class=_CaptureHook, display_pub_class=_CapturePub)
         InteractiveShell._instance = self
         self.out,self.count = [],1
         self.exc = self.result = self._fname = self._cell_idx = None
-        self.run_cell(_CODE_MATPLOTLIB_INLINE)
+        try: self.enable_matplotlib('inline')
+        except ModuleNotFoundError: pass
         if path: self.set_path(path)
         
     def set_path(self, path):
@@ -67,24 +76,45 @@ class CaptureShell(FastInteractiveShell):
         "Disable GUI (over-ridden; called by IPython)"
         pass
     
+    def enable_matplotlib(self, gui=None):
+        gui, backend = super().enable_matplotlib(gui)
+        # Adapted from matplotlib_inline.backend_inline.configure_inline_support
+        cfg = InlineBackend.instance(parent=self)
+        select_figure_formats(self, cfg.figure_formats, **cfg.print_figure_kwargs)
+        return gui, backend
+    
     def _showtraceback(self, etype, evalue, stb: str):
         self.out.append(_out_exc(etype, evalue, stb))
         self.exc = (etype, evalue, '\n'.join(stb))
 
-    def _add_out(self, data, meta, typ='execute_result', **kwargs): self.out.append(dict(data=data, metadata=meta, output_type=typ, **kwargs))
+    def _add_out(self, data, meta, typ='execute_result', **kwargs):
+        self._stream()
+        def _format(k, v):
+            if k.startswith('text/'): return v.splitlines(True)
+            if k.startswith('image/') and isinstance(v, bytes):
+                v = b64encode(v).decode()
+                if not v.endswith('\n'): v+='\n'
+                return v
+            return v
+        data = {k: _format(k,v) for k,v in data.items()}
+        self.out.append(dict(data=data, metadata=meta, output_type=typ, **kwargs))
 
     def _add_exec(self, result, meta, typ='execute_result'):
-        fd = {k:v.splitlines(True) for k,v in result.items()}
-        self._add_out(fd, meta, execution_count=self.count)
+        self._add_out(result, meta, execution_count=self.count)
         self.count += 1
 
     def _result(self, result):
         self.result = result
         self._add_exec(*self.display_formatter.format(result))
 
-    def _stream(self, std):
-        text = std.getvalue()
-        if text: self.out.append(_out_stream(text))
+    def _stream(self):
+        for nm in ('stdout','stderr'):
+            if hasattr(self, nm):
+                std = getattr(self, nm)
+                text = std.getvalue()
+                if text:
+                    self.out.append(_out_stream(text, nm))
+                    setattr(self, nm, StringIO())
 
 # %% ../nbs/02_shell.ipynb 10
 @patch
@@ -96,12 +126,12 @@ def run(self:CaptureShell,
     self._code = code
     self.exc = False
     self.out.clear()
-    self.sys_stdout,self.sys_stderr = sys.stdout,sys.stderr
-    if stdout: stdout = sys.stdout = StringIO()
-    if stderr: stderr = sys.stderr = StringIO()
+    sys_stdout,sys_stderr = sys.stdout, sys.stderr
+    if stdout: self.stdout = sys.stdout = StringIO()
+    if stderr: self.stderr = sys.stderr = StringIO()
     try: self.run_cell(code)
-    finally: sys.stdout,sys.stderr = self.sys_stdout,self.sys_stderr
-    self._stream(stdout)
+    finally: sys.stdout,sys.stderr = sys_stdout,sys_stderr
+    self._stream()
     return [*self.out]
 
 # %% ../nbs/02_shell.ipynb 19

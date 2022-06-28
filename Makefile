@@ -2,9 +2,9 @@
 SHELL := /bin/bash
 SRC = $(wildcard nbs/*.ipynb)
 
-nbprocess: $(SRC)
+execnb: $(SRC)
 	nbprocess_export
-	touch nbprocess
+	touch execnb
 
 sync:
 	nbprocess_update

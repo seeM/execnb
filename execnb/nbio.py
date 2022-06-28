@@ -3,7 +3,7 @@
 # %% auto 0
 __all__ = ['NbCell', 'dict2nb', 'read_nb', 'nb2dict', 'nb2str', 'write_nb']
 
-# %% ../nbs/01_nbio.ipynb 3
+# %% ../nbs/01_nbio.ipynb 2
 from fastcore.imports import *
 from fastcore.foundation import *
 from fastcore.basics import *
@@ -12,7 +12,7 @@ from fastcore.xtras import *
 import ast,functools,json
 from pprint import pformat,pprint
 
-# %% ../nbs/01_nbio.ipynb 13
+# %% ../nbs/01_nbio.ipynb 12
 class NbCell(AttrDict):
     def __init__(self, idx, cell):
         super().__init__(cell)
@@ -31,21 +31,21 @@ class NbCell(AttrDict):
     def __hash__(self): return hash(self.source) + hash(self.cell_type)
     def __eq__(self,o): return self.source==o.source and self.cell_type==o.cell_type
 
-# %% ../nbs/01_nbio.ipynb 15
+# %% ../nbs/01_nbio.ipynb 14
 def dict2nb(js):
     "Convert dict `js` to an `AttrDict`, "
     nb = dict2obj(js)
     nb.cells = nb.cells.enumerate().starmap(NbCell)
     return nb
 
-# %% ../nbs/01_nbio.ipynb 20
+# %% ../nbs/01_nbio.ipynb 19
 def read_nb(path):
     "Return notebook at `path`"
     res = dict2nb(Path(path).read_json())
     res['path_'] = str(path)
     return res
 
-# %% ../nbs/01_nbio.ipynb 26
+# %% ../nbs/01_nbio.ipynb 25
 def nb2dict(d, k=None):
     "Convert parsed notebook to `dict`"
     if k in ('source',): return d.splitlines(keepends=True)
@@ -53,13 +53,13 @@ def nb2dict(d, k=None):
     if not isinstance(d, dict): return d
     return dict(**{k:nb2dict(v,k) for k,v in d.items() if k[-1] != '_'})
 
-# %% ../nbs/01_nbio.ipynb 29
+# %% ../nbs/01_nbio.ipynb 28
 def nb2str(nb):
     "Convert `nb` to a `str`"
     if isinstance(nb, (AttrDict,L)): nb = nb2dict(nb)
     return json.dumps(nb, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
 
-# %% ../nbs/01_nbio.ipynb 32
+# %% ../nbs/01_nbio.ipynb 31
 def write_nb(nb, path):
     "Write `nb` to `path`"
     with maybe_open(path, 'w', encoding='utf-8') as f: f.write(nb2str(nb))
